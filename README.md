@@ -2,11 +2,11 @@
 
 Android 上的 **Clash 系列配置管理工具**。在手机上整理节点、订阅和分流规则，生成 Clash 系列 YAML 配置。
 
-**[下载 Android 0.11.0 APK](https://github.com/not-power/jichang/releases/download/v0.11.0/jichang-v0.11.0.apk)** · 支持 Android 13 及以上
+**[下载 Android 0.12.0 APK](https://github.com/not-power/jichang/releases/download/v0.12.0/jichang-v0.12.0.apk)** · 支持 Android 13 及以上
 
 ## 主要功能
 
-- **资源管理**：添加订阅、导入节点链接或扫码导入，保存和复用配置模板。
+- **资源管理**：添加订阅、导入节点链接或扫码导入，手动新增和编辑 VLESS Reality、Hysteria2（HY2）节点，保存和复用配置模板。
 - **规则编辑**：管理分流规则、策略组、规则集与子规则；支持搜索、排序、批量操作和配置校验。
 - **Clash 配置生成**：设置常用参数，也可编辑高级 YAML；导出前可校验并预览生成结果。
 - **分享配置**：下载 YAML，或在局域网内通过链接和二维码分享。
@@ -27,5 +27,13 @@ Android 上的 **Clash 系列配置管理工具**。在手机上整理节点、�
 3. 在「分享」预览、下载 Clash YAML，或开启局域网分享。
 
 当前以 **Mihomo（Clash.Meta）** 的配置格式为适配目标；其他 Clash 系列内核对协议和规则的支持可能不同。鸡场只负责生成配置，不内置代理内核或 VPN。扫码导入时会向系统申请相机权限。
+
+### Reality 与 HY2 节点
+
+在「资源 → 节点 → 添加节点」选择「手动填写」，或先粘贴、扫描节点链接，再进入节点编辑。
+
+- **VLESS Reality**：填写 UUID、公钥、Short ID、SNI、客户端指纹和 Flow。新建时默认端口 443、指纹 `chrome`、Flow `xtls-rprx-vision`；Short ID 可留空，前导零会保留。
+- **HY2**：支持完整的 `用户名:密码` 认证、混淆密码、证书校验与指纹、ALPN、带宽和端口跳跃。无认证时密码可留空；标准链接未写端口时使用 443。跳跃端口可填写 `443,8443-8450`，间隔可填写 `30` 或 `15-30` 秒。
+- **高级参数**：通过「高级 YAML」编辑 ECH、Reality 混合密钥、Gecko 专有参数等。与表单切换时会同步参数，语法错误时保留草稿；表单未提供的参数会继续保留。手写 YAML 时，纯数字或含前导零的 Short ID 应加引号，例如 `short-id: '0012'`。
 
 项目采用 [MIT 许可证](LICENSE)。

@@ -99,7 +99,7 @@ class RuleProviderRefresher(
     private suspend fun fetch(provider: RuleProvider): ByteArray {
         val url = provider.url.trim().toHttpUrlOrNull() ?: error("规则集 URL 无效")
         require(url.scheme in setOf("http", "https")) { "规则集只支持 HTTP(S) URL" }
-        val request = Request.Builder().url(url).header("User-Agent", "JichangAndroid/0.11.0").apply {
+        val request = Request.Builder().url(url).header("User-Agent", "JichangAndroid/0.12.0").apply {
             provider.headers.forEach { (name, values) -> values.forEach { value -> addHeader(name, value) } }
         }.get().build()
         return client.newCall(request).readCancellable { response ->

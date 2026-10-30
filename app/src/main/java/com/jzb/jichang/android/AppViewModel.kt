@@ -211,6 +211,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun setNodeEnabled(id: String, enabled: Boolean) = run { repository.toggleNode(id, enabled); null }
     fun setNodesEnabled(ids: Set<String>, enabled: Boolean) = run { repository.setNodesEnabled(ids, enabled); "已${if (enabled) "启用" else "停用"} ${ids.size} 个节点" }
     fun updateNode(id: String, name: String, type: String, server: String, port: Int, options: Map<String, Any?>) = run { repository.updateNode(id, name, type, server, port, options); "节点已保存" }
+    fun addNode(name: String, type: String, server: String, port: Int, options: Map<String, Any?>) = run { repository.addNode(name, type, server, port, options); "节点已添加" }
     fun removeNode(id: String) = run { repository.removeNode(id); "节点已删除" }
     fun addGroup(name: String, type: String, members: List<String>, ruleIndices: Set<Int> = emptySet(), providerIds: Set<String> = emptySet()) = runRules {
         repository.addGroup(name, type, members, ruleIndices, providerIds); "策略组已添加，关联规则目标已更新"

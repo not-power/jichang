@@ -9,7 +9,6 @@ import org.yaml.snakeyaml.constructor.SafeConstructor
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
-import java.util.UUID
 import java.util.Base64
 
 /** Parses subscription bodies locally. Unsupported entries are counted, never silently exported. */
@@ -60,14 +59,7 @@ class SubscriptionParser {
                 val map = (item as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value } ?: run {
                     skipped++; return@mapNotNull null
                 }
-                val type = map["type"]?.toString()?.lowercase()
-                val server = map["server"]?.toString()
-                val port = (map["port"] as? Number)?.toInt() ?: map["port"]?.toString()?.toIntOrNull()
-                if (type.isNullOrBlank() || server.isNullOrBlank() || port !in 1..65535) {
-                    skipped++; return@mapNotNull null
-                }
-                val name = map["name"]?.toString()?.takeIf(String::isNotBlank) ?: "$type $server:$port"
-                ProxyNode(UUID.randomUUID().toString(), sourceId, name, type, server, port!!, options = map)
+                runCatching { NodeProtocolOptions.node(map, sourceId) }.getOrElse { skipped++; null }
             }
             ParseResult(nodes, skipped)
         }.getOrNull()
@@ -77,9 +69,10 @@ class SubscriptionParser {
         if (line.startsWith("vmess://", true)) return parseVmess(line, sourceId)
         if (line.startsWith("ss://", true)) return parseShadowsocks(line, sourceId)
         if (line.startsWith("ssr://", true)) return parseShadowsocksR(line, sourceId)
+        if (line.startsWith("hy2://", true) || line.startsWith("hysteria2://", true)) return parseHysteria2(line, sourceId)
         val uri = URI(line)
         val type = uri.scheme?.lowercase() ?: return null
-        if (type !in setOf("vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic", "anytls", "socks", "socks5", "http")) return null
+        if (type !in setOf("vless", "trojan", "hysteria", "tuic", "anytls", "socks", "socks5", "http")) return null
         val host = uri.host?.removeSurrounding("[", "]") ?: return null
         val port = uri.port.takeIf { it in 1..65535 } ?: return null
         val query = parseQuery(uri.rawQuery)
@@ -87,7 +80,7 @@ class SubscriptionParser {
         val username = userInfo.getOrNull(0)?.decodeUri().orEmpty()
         val password = userInfo.getOrNull(1)?.decodeUri().orEmpty()
         val name = uri.rawFragment?.decodeUri()?.takeIf(String::isNotBlank) ?: "$type $host:$port"
-        val normalizedType = if (type == "hy2") "hysteria2" else if (type == "socks") "socks5" else type
+        val normalizedType = if (type == "socks") "socks5" else type
         val fields = linkedMapOf<String, Any?>("type" to normalizedType, "name" to name, "server" to host, "port" to port)
         when (normalizedType) {
             "vless" -> {
@@ -97,7 +90,7 @@ class SubscriptionParser {
                 addTLS(fields, query)
                 addTransport(fields, query)
                 if (query["security"] == "reality") {
-                    fields["reality-opts"] = linkedMapOf("public-key" to query["pbk"], "short-id" to query["sid"])
+                    fields["reality-opts"] = linkedMapOf("public-key" to query["pbk"], "short-id" to (query["sid"] ?: ""))
                 }
             }
             "trojan" -> { fields["password"] = username; fields["tls"] = true; addTLS(fields, query); addTransport(fields, query) }
@@ -109,7 +102,6 @@ class SubscriptionParser {
                 query["upmbps"]?.toIntOrNull()?.let { fields["up"] = it }
                 query["downmbps"]?.toIntOrNull()?.let { fields["down"] = it }
             }
-            "hysteria2" -> { fields["password"] = password.ifBlank { username }; fields["tls"] = true; addTLS(fields, query); query["obfs"]?.let { fields["obfs"] = it } }
             "tuic" -> {
                 fields["uuid"] = username; fields["password"] = password; fields["tls"] = true; addTLS(fields, query)
                 fields["congestion-controller"] = query["congestion_control"] ?: "cubic"
@@ -118,6 +110,51 @@ class SubscriptionParser {
             "anytls" -> { fields["password"] = username; fields["tls"] = true; addTLS(fields, query) }
             "socks5", "http" -> { fields["username"] = username; fields["password"] = password }
         }
+        return createNode(fields, sourceId)
+    }
+
+    private fun parseHysteria2(line: String, sourceId: String?): ProxyNode? {
+        // URI rejects bracketed IPv6 with a multi-port authority before host can be read.
+        val body = line.substringAfter("://")
+        val authority = body.takeWhile { it !in "/?#" }
+        val uri = URI("hy2://placeholder" + body.substring(authority.length))
+        val endpoint = authority.substringAfterLast('@')
+        val host: String
+        val portText: String
+        if (endpoint.startsWith('[')) {
+            val end = endpoint.indexOf(']')
+            if (end < 0) return null
+            host = endpoint.substring(1, end)
+            val suffix = endpoint.substring(end + 1)
+            if (suffix.isNotEmpty() && !suffix.startsWith(':')) return null
+            portText = suffix.removePrefix(":")
+            if (suffix == ":") return null
+        } else {
+            host = endpoint.substringBefore(':')
+            portText = endpoint.substringAfter(':', "")
+            if (endpoint.endsWith(':')) return null
+        }
+        val query = parseQuery(uri.rawQuery)
+        val addressPort = portText.takeIf(String::isNotBlank)?.let(NodeProtocolOptions::firstPort) ?: 443
+        val addressPorts = portText.takeIf { ',' in it || '-' in it || '/' in it }
+        val fields = linkedMapOf<String, Any?>(
+            "type" to "hysteria2", "server" to host, "port" to addressPort,
+            "name" to (uri.rawFragment?.decodeUri()?.takeIf(String::isNotBlank) ?: "HY2 $host:$addressPort"),
+            "password" to (if ('@' in authority) authority.substringBeforeLast('@').decodeUri() else ""),
+        )
+        for (key in listOf("insecure", "allowInsecure")) {
+            if (query.containsKey(key) && query[key]?.lowercase() !in setOf("0", "1", "true", "false")) return null
+        }
+        addTLS(fields, query)
+        fields.remove("client-fingerprint")
+        fields["sni"] = fields.remove("servername")
+        fields["ports"] = query["ports"] ?: query["mport"] ?: addressPorts
+        for (key in listOf("obfs", "obfs-password", "hop-interval", "up", "down")) query[key]?.let { fields[key] = it }
+        query["pinSHA256"]?.let { fields["fingerprint"] = it }
+        query["ech"]?.let { fields["ech-opts"] = linkedMapOf("enable" to true, "config" to it) }
+        // Invalid optional numeric values must not silently become a different connection.
+        val validation = NodeProtocolOptions.errors(fields["name"].toString(), "hysteria2", host, addressPort.toString(), fields)
+        if (validation.keys.any { it in setOf("ports", "hop-interval", "up", "down") }) return null
         return createNode(fields, sourceId)
     }
 
@@ -224,7 +261,8 @@ class SubscriptionParser {
         fields["servername"] = query["sni"] ?: query["peer"]
         fields["alpn"] = query["alpn"]?.split(',')?.map(String::trim)?.filter(String::isNotBlank)
         fields["client-fingerprint"] = query["fp"]
-        if (query["allowInsecure"] == "1" || query["insecure"] == "1") fields["skip-cert-verify"] = true
+        val insecure = query["allowInsecure"] ?: query["insecure"]
+        if (insecure != null) fields["skip-cert-verify"] = insecure.equals("true", true) || insecure == "1"
     }
 
     private fun addTransport(fields: MutableMap<String, Any?>, query: Map<String, String?>) {
@@ -239,12 +277,7 @@ class SubscriptionParser {
     }
 
     private fun createNode(fields: Map<String, Any?>, sourceId: String?): ProxyNode? {
-        val type = fields["type"]?.toString() ?: return null
-        val server = fields["server"]?.toString()?.takeIf(String::isNotBlank) ?: return null
-        val port = (fields["port"] as? Number)?.toInt() ?: fields["port"]?.toString()?.toIntOrNull() ?: return null
-        if (port !in 1..65535) return null
-        val name = fields["name"]?.toString()?.replace("[\\r\\n]+".toRegex(), " ")?.trim()?.ifBlank { null } ?: "$type $server:$port"
-        return ProxyNode(UUID.randomUUID().toString(), sourceId, name, type, server, port, options = fields)
+        return runCatching { NodeProtocolOptions.node(fields, sourceId) }.getOrNull()
     }
 
     private fun parseQuery(raw: String?): Map<String, String?> = raw.orEmpty().split('&').filter(String::isNotBlank).associate { token ->

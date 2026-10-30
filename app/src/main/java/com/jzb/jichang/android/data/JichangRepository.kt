@@ -21,6 +21,7 @@ import com.jzb.jichang.android.service.SubscriptionParser
 import com.jzb.jichang.android.service.MihomoTemplateParser
 import com.jzb.jichang.android.service.MihomoSettings
 import com.jzb.jichang.android.service.PortableBackup
+import com.jzb.jichang.android.service.NodeProtocolOptions
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -277,7 +278,7 @@ class JichangRepository(private val dao: SnapshotDao, private val http: OkHttpCl
         awaitReady()
         val source = mutableState.value.sources.firstOrNull { it.id == sourceId } ?: error("订阅已不存在")
         try {
-            val request = Request.Builder().url(source.url).header("User-Agent", "JichangAndroid/0.11.0").build()
+            val request = Request.Builder().url(source.url).header("User-Agent", "JichangAndroid/0.12.0").build()
             val body = http.newCall(request).readCancellable { response ->
                 if (!response.isSuccessful) error("服务器返回 HTTP ${response.code}")
                 val responseBody = response.body ?: error("订阅内容为空")
@@ -434,11 +435,28 @@ class JichangRepository(private val dao: SnapshotDao, private val http: OkHttpCl
         profile.copy(enabledNodeIds = if (enabled) profile.enabledNodeIds + nodeIds else profile.enabledNodeIds - nodeIds)
     }
 
+    suspend fun addNode(name: String, type: String, server: String, port: Int, options: Map<String, Any?>) {
+        val target = targetId()
+        val node = editedNode(name, type, server, port, options)
+        update { state ->
+            require(state.profiles.any { it.id == target }) { "配置已不存在" }
+            state.copy(
+                nodes = state.nodes + node,
+                profiles = state.profiles.map { profile -> if (profile.id == target) profile.copy(enabledNodeIds = profile.enabledNodeIds + node.id) else profile },
+            )
+        }
+    }
+
+    private fun editedNode(name: String, type: String, server: String, port: Int, options: Map<String, Any?>): ProxyNode {
+        val errors = NodeProtocolOptions.errors(name, type, server, port.toString(), options)
+        require(errors.isEmpty()) { errors.values.first() }
+        return NodeProtocolOptions.node(options + mapOf("type" to type, "name" to name.trim(), "server" to server.trim(), "port" to port))
+    }
+
     suspend fun updateNode(nodeId: String, name: String, type: String, server: String, port: Int, options: Map<String, Any?>) = update { state ->
-        require(name.isNotBlank()) { "请输入节点名称" }
-        require(server.isNotBlank()) { "请输入服务器地址" }
-        require(port in 1..65535) { "端口须为 1-65535" }
-        state.copy(nodes = state.nodes.map { node -> if (node.id == nodeId) node.copy(name = name.trim(), type = type, server = server.trim(), port = port, options = options + mapOf("type" to type, "name" to name.trim(), "server" to server.trim(), "port" to port)) else node })
+        require(state.nodes.any { it.id == nodeId }) { "节点已不存在" }
+        val edited = editedNode(name, type, server, port, options)
+        state.copy(nodes = state.nodes.map { node -> if (node.id == nodeId) edited.copy(id = node.id, sourceId = node.sourceId, enabled = node.enabled) else node })
     }
 
     suspend fun removeNode(nodeId: String) = update { state -> state.copy(

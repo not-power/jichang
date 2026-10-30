@@ -260,7 +260,7 @@ private fun JichangDialogSurface(modifier: Modifier = Modifier, content: @Compos
 }
 
 @Composable
-private fun FullScreenEditorDialog(
+internal fun FullScreenEditorDialog(
     title: String,
     dirty: Boolean,
     valid: Boolean,
@@ -756,7 +756,9 @@ private fun JichangApp(viewModel: AppViewModel = viewModel()) {
 
     when (dialog) {
         DialogKind.Source -> SourceDialog(onDismiss = { dialog = null }, onSave = { name, url -> viewModel.save({ viewModel.addSource(name, url) }) { dialog = null } })
-        DialogKind.Node -> NodeDialog(onDismiss = { dialog = null }, onSave = { raw -> viewModel.save({ viewModel.importNodes(raw) }) { dialog = null } })
+        DialogKind.Node -> NodeDialog(onDismiss = { dialog = null },
+            onSave = { raw -> viewModel.save({ viewModel.importNodes(raw) }) { dialog = null } },
+            onManualSave = { name, type, server, port, options -> viewModel.save({ viewModel.addNode(name, type, server, port, options) }) { dialog = null } })
         DialogKind.Group -> GroupDialog(state, editingGroup, onDismiss = { dialog = null; editingGroup = null }, onSave = { name, type, members, ruleIndices, providerIds ->
             val existing = editingGroup
             viewModel.save({ if (existing == null) viewModel.addGroup(name, type, members, ruleIndices, providerIds) else viewModel.updateGroup(existing.name, name, type, members) }) { dialog = null; editingGroup = null }
@@ -1053,7 +1055,7 @@ private fun NodesPage(
             )
         }
     }
-    editingNode?.let { node -> NodeEditDialog(node, onDismiss = { editingNode = null }, onSave = { name, type, server, port, options ->
+    editingNode?.let { node -> NodeEditorDialog(node, onDismiss = { editingNode = null }, onSave = { name, type, server, port, options ->
         viewModel.save({ viewModel.updateNode(node.id, name, type, server, port, options) }) { editingNode = null }
     }) }
     nodeToDelete?.let { node -> JichangAlertDialog(onDismissRequest = { nodeToDelete = null }, title = { Text("删除节点？") },
@@ -2442,7 +2444,13 @@ private fun RefreshProgressCard(progress: com.jzb.jichang.android.service.Refres
 }
 
 @Composable
-private fun NodeDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
+private fun NodeDialog(onDismiss: () -> Unit, onSave: (String) -> Unit,
+    onManualSave: (String, String, String, Int, Map<String, Any?>) -> Unit) {
+    var manual by rememberSaveable { mutableStateOf(false) }
+    if (manual) {
+        NodeEditorDialog(node = null, onDismiss = { manual = false }, onSave = onManualSave)
+        return
+    }
     val context = LocalContext.current
     var raw by rememberSaveable { mutableStateOf("") }
     var scanError by remember { mutableStateOf<String?>(null) }
@@ -2479,6 +2487,7 @@ private fun NodeDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
         title = { Text("导入节点") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("粘贴或扫描 Mihomo/Clash 节点内容、节点分享链接。机场订阅二维码请在订阅页添加。")
+            OutlinedButton(onClick = { manual = true }, modifier = Modifier.fillMaxWidth(), enabled = !LocalEditorSaveState.current.saving) { Text("手动填写") }
             OutlinedButton(
                 onClick = {
                     scanError = null
@@ -2651,11 +2660,11 @@ private fun RuleDialog(state: AppState, initial: Pair<Int, RoutingRule>?, onDism
                     type == "MATCH" -> Text("MATCH 会被固定在规则列表末尾。", style = MaterialTheme.typography.bodySmall)
                     composite -> Text("此规则包含组合条件，请展开高级条件编辑条件树。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     type == "RULE-SET" -> {
-                        SelectField("规则集", value, state.ruleProfile.providers.map { it.name }, { value = it })
+                    SelectField("规则集", value, state.ruleProfile.providers.map { it.name }, onSelect = { value = it })
                         if (state.ruleProfile.providers.isEmpty()) Text("请先到规则集页面添加规则集。", color = MaterialTheme.colorScheme.error)
                     }
                     type == "SUB-RULE" -> {
-                        SelectField("子规则", value, state.ruleProfile.subRules.map { it.name }, { value = it })
+                    SelectField("子规则", value, state.ruleProfile.subRules.map { it.name }, onSelect = { value = it })
                         if (state.ruleProfile.subRules.isEmpty()) Text("请先到子规则页面添加子规则。", color = MaterialTheme.colorScheme.error)
                     }
                     type == "GEOSITE" -> {
@@ -2804,10 +2813,10 @@ private fun ruleTypeDescription(type: String): String = when (type) {
 }
 
 @Composable
-private fun SelectField(label: String, value: String, items: List<String>, onSelect: (String) -> Unit) {
+internal fun SelectField(label: String, value: String, items: List<String>, enabled: Boolean = true, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    Box { OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text("$label：${value.ifBlank { "请选择" }}") }
-        DropdownMenu(expanded, { expanded = false }) { items.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { onSelect(it); expanded = false }) } } }
+    Box { OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("$label：${value.ifBlank { "请选择" }}") }
+        DropdownMenu(expanded && enabled, { expanded = false }) { items.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { onSelect(it); expanded = false }) } } }
 }
 
 @Composable
@@ -2969,30 +2978,6 @@ private fun ProfileDialog(profile: ConfigProfile, creating: Boolean, onDismiss: 
             OutlinedTextField(name, { name = it; if (creating && fileName.isBlank()) fileName = it }, Modifier.fillMaxWidth(), label = { Text("配置名称") }, singleLine = true)
             OutlinedTextField(fileName, { fileName = it }, Modifier.fillMaxWidth(), label = { Text("导出文件名（无需 .yaml）") }, singleLine = true)
             if (creating) Row(Modifier.fillMaxWidth().toggleable(copy, role = Role.Checkbox, onValueChange = { copy = it }).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) { Checkbox(copy, null); Text("复制当前规则和选择") }
-        }
-    }
-}
-
-@Composable
-private fun NodeEditDialog(node: ProxyNode, onDismiss: () -> Unit, onSave: (String, String, String, Int, Map<String, Any?>) -> Unit) {
-    var name by rememberSaveable(node.id) { mutableStateOf(node.name) }
-    var type by rememberSaveable(node.id) { mutableStateOf(node.type) }
-    var server by rememberSaveable(node.id) { mutableStateOf(node.server) }
-    var port by rememberSaveable(node.id) { mutableStateOf(node.port.toString()) }
-    val baseline = remember(node.id) { MihomoNodeOptionsYaml.dump(node.options) }
-    var extra by rememberSaveable(node.id) { mutableStateOf(baseline) }
-    val settled = debouncedQuery(extra)
-    val parsedOptions = backgroundValue(settled, null as Result<Map<String, Any?>>?) { runCatching { MihomoNodeOptionsYaml.parse(settled) } }
-    FullScreenEditorDialog(title = "编辑节点", dirty = name != node.name || type != node.type || server != node.server || port != node.port.toString() || extra != baseline,
-        valid = name.isNotBlank() && type.isNotBlank() && server.isNotBlank() && port.toIntOrNull() in 1..65535 && parsedOptions?.isSuccess == true && settled == extra,
-        onDismiss = onDismiss, onSave = { parsedOptions?.getOrNull()?.let { onSave(name, type, server, port.toInt(), it) } }) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("名称") }, singleLine = true)
-            OutlinedTextField(type, { type = it }, Modifier.fillMaxWidth(), label = { Text("Mihomo 协议类型") }, supportingText = { Text("例如 ss、vmess、vless、trojan、hysteria2、tuic、anytls") }, singleLine = true)
-            OutlinedTextField(server, { server = it }, Modifier.fillMaxWidth(), label = { Text("服务器") }, singleLine = true)
-            OutlinedTextField(port, { port = it.filter(Char::isDigit) }, Modifier.fillMaxWidth(), label = { Text("端口") }, singleLine = true)
-            OutlinedTextField(extra, { extra = it }, Modifier.fillMaxWidth(), label = { Text("协议参数 YAML") }, textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), minLines = 6)
-            parsedOptions?.exceptionOrNull()?.let { Text(it.message ?: "协议参数 YAML 无效", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }

@@ -37,11 +37,7 @@ class MihomoTemplateParser {
 
         val nodes = (root["proxies"] as? List<*>)?.mapNotNull { raw ->
             val map = raw.asStringMap() ?: return@mapNotNull null
-            val type = map["type"]?.toString()?.lowercase()?.takeIf(String::isNotBlank) ?: return@mapNotNull null
-            val server = map["server"]?.toString()?.takeIf(String::isNotBlank) ?: return@mapNotNull null
-            val port = map["port"].asInt()?.takeIf { it in 1..65535 } ?: return@mapNotNull null
-            val name = map["name"]?.toString()?.takeIf(String::isNotBlank) ?: "$type $server:$port"
-            ProxyNode(UUID.randomUUID().toString(), null, name, type, server, port, options = map)
+            runCatching { NodeProtocolOptions.node(map) }.getOrNull()
         }.orEmpty()
         val nodeIdsByName = nodes.associate { it.name to it.id }
         val groups = (root["proxy-groups"] as? List<*>)?.mapNotNull { raw ->

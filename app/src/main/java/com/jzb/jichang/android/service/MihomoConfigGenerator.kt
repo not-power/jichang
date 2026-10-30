@@ -53,7 +53,7 @@ class MihomoConfigGenerator {
             node.id in (exportOptions.enabledNodeIds ?: state.nodes.filter { it.enabled }.map { it.id }.toSet()) &&
                 node.id !in exportOptions.excludedNodeIds && (node.sourceId == null || node.sourceId in enabledSourceIds)
         }
-        val supportedSelected = selectedNodes.filter { it.type.lowercase() in supportedTypes }
+        val supportedSelected = selectedNodes.filter { NodeProtocolOptions.canonicalType(it.type) in supportedTypes }
         val skipped = selectedNodes.size - supportedSelected.size
         val providerSources = if (exportOptions.sourceMode == ConfigSourceMode.REFERENCE_SUBSCRIPTIONS) {
             enabledSources.filter { it.providerCompatible == true }
@@ -377,8 +377,8 @@ class MihomoConfigGenerator {
     private fun exactNamePattern(name: String): String = "(?i)^${Regex.escape(name)}$"
 
     private fun proxyMap(node: ProxyNode, name: String): LinkedHashMap<String, Any?> = LinkedHashMap<String, Any?>().apply {
-        node.options.forEach { (key, value) -> if (value != null && key !in setOf("name", "server", "port")) put(key, value) }
-        put("type", node.type.lowercase())
+        NodeProtocolOptions.canonicalOptions(node.type, node.options).forEach { (key, value) -> if (value != null && key !in setOf("name", "server", "port")) put(key, value) }
+        put("type", NodeProtocolOptions.canonicalType(node.type))
         put("name", name)
         put("server", node.server)
         put("port", node.port)
